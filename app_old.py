@@ -8,7 +8,6 @@ Run AFTER the notebook has executed and saved model_artifacts.pkl:
 
 import pickle
 import time
-
 import gradio as gr
 import numpy as np
 import pandas as pd

@@ -1,0 +1,890 @@
+import os
+import re
+import pickle
+import unicodedata
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+from scipy import sparse
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+ORDERS_PATH = "data/raw/orders.csv"
+SALE_TIMES_PATH = "data/raw/sale_times.csv"
+LAUNCHES_PATH = "data/raw/launched_product_details.csv"
+TARGET_GROUP_MAPPING_PATH = "data/raw/target_group_mapping.csv"
+
+ARTIFACT_DIR = "artifacts"
+ARTIFACT_PATH = os.path.join(ARTIFACT_DIR, "model_artifacts_v2.pkl")
+TARGET_GROUP_TOP_N = 8
+
+TARGET_METRICS = [
+    "first_week_quantity",
+    "first_6_week_quantity",
+    "first_week_nc",
+    "first_6_week_nc",
+    "first_week_total_c",
+    "first_6_week_total_c",
+]
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def normalize_text(x):
+    """
+    Normalize text for matching.
+    """
+    if pd.isna(x):
+        return ""
+
+    x = str(x).lower().strip()
+    x = unicodedata.normalize("NFKD", x)
+    x = "".join([c for c in x if not unicodedata.combining(c)])
+    x = re.sub(r"[^a-z0-9äöüß\s]", " ", x)
+    x = re.sub(r"\s+", " ", x).strip()
+    return x
+
+
+def clean_numeric(x):
+    """
+    Converts values like:
+    '39.90 €', '39,90 €', '8,000', '1 %', '-', '-%'
+    into numeric float values.
+    """
+    if pd.isna(x):
+        return np.nan
+
+    x = str(x).strip()
+
+    if x in ["", "-", "-%", "nan", "None"]:
+        return np.nan
+
+    x = x.replace("€", "")
+    x = x.replace("%", "")
+    x = x.strip()
+
+    # Handle thousands format like 8,000 or 1,500
+    if re.match(r"^\d{1,3}(,\d{3})+$", x):
+        x = x.replace(",", "")
+    else:
+        # Handle decimal comma like 39,90
+        x = x.replace(",", ".")
+
+    x = re.sub(r"[^0-9.\-]", "", x)
+
+    if x in ["", "-", "."]:
+        return np.nan
+
+    return float(x)
+
+
+def normalize_strategy(x):
+    """
+    Normalize launch strategy labels.
+    """
+    if pd.isna(x):
+        return "standard"
+
+    x = normalize_text(x)
+    x = x.replace("-", "_").replace(" ", "_")
+
+    mapping = {
+        "standard": "standard",
+        "standart": "standard",
+        "co_creation": "co_creation",
+        "cocreation": "co_creation",
+        "co": "co_creation",
+        "limited_edition": "limited_edition",
+        "limited": "limited_edition",
+    }
+
+    return mapping.get(x, x)
+
+
+def safe_divide(a, b, default=1.0):
+    if b is None or pd.isna(b) or b == 0:
+        return default
+    if a is None or pd.isna(a):
+        return default
+    return a / b
+
+
+def clip_factor(x, low=0.5, high=1.8):
+    """
+    Prevents unstable multipliers.
+    """
+    if pd.isna(x):
+        return 1.0
+    return float(np.clip(x, low, high))
+
+
+# ============================================================
+# LOAD DATA
+# ============================================================
+
+def load_data():
+    print("Loading data...")
+
+    orders = pd.read_csv(ORDERS_PATH, low_memory=False)
+    sale_times = pd.read_csv(SALE_TIMES_PATH, sep=";", low_memory=False)
+    # This file is semicolon-separated.
+    launches = pd.read_csv(LAUNCHES_PATH, sep=";", low_memory=False)
+
+    orders.columns = orders.columns.str.strip()
+    sale_times.columns = sale_times.columns.str.strip()
+    launches.columns = launches.columns.str.strip()
+
+    print(f"orders: {orders.shape}")
+    print(f"sale_times: {sale_times.shape}")
+    print(f"launches: {launches.shape}")
+
+    print("\nLaunch columns:")
+    print(list(launches.columns))
+
+    return orders, sale_times, launches
+
+
+# ============================================================
+# CLEAN DATA
+# ============================================================
+
+def clean_orders(orders):
+    df = orders.copy()
+
+    required_cols = [
+        "order_id",
+        "customer_nr",
+        "sku",
+        "price",
+        "date",
+        "artikel_name",
+        "net_revenue",
+        "quantity",
+        "flavour",
+        "product_category",
+        "product",
+        "customer_status",
+    ]
+
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"orders.csv missing columns: {missing}")
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    df["net_revenue"] = pd.to_numeric(df["net_revenue"], errors="coerce")
+
+    # Basic cleaning
+    df = df[df["date"].notna()]
+    df = df[df["customer_nr"].notna()]
+    df = df[df["sku"].notna()]
+    df = df[df["quantity"].fillna(0) > 0]
+
+    # Remove likely non-product rows
+    remove_pattern = "shipping|versand|discount|rabatt|gutschein|gift card|free article|gratis"
+    text_cols = ["artikel_name", "product", "product_category"]
+
+    combined_text = ""
+    for col in text_cols:
+        if col in df.columns:
+            combined_text = combined_text + " " + df[col].astype(str)
+
+    mask_remove = combined_text.str.lower().str.contains(remove_pattern, regex=True, na=False)
+    df = df[~mask_remove].copy()
+
+    df["product_norm"] = df["product"].apply(normalize_text)
+    df["flavour_norm"] = df["flavour"].apply(normalize_text)
+    df["category_norm"] = df["product_category"].apply(normalize_text)
+    df["artikel_name_norm"] = df["artikel_name"].apply(normalize_text)
+
+    df["month"] = df["date"].dt.month
+    df["year"] = df["date"].dt.year
+    df["year_month"] = df["date"].dt.to_period("M").astype(str)
+
+    print(f"orders cleaned: {df.shape}")
+
+    return df
+
+
+def clean_sale_times(sale_times):
+    df = sale_times.copy()
+
+    required_cols = ["name", "start_d", "end_d"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"sale_times.csv missing columns: {missing}")
+
+    df["start_d"] = pd.to_datetime(df["start_d"], errors="coerce")
+    df["end_d"] = pd.to_datetime(df["end_d"], errors="coerce")
+
+    df = df[df["start_d"].notna() & df["end_d"].notna()].copy()
+    df["name_norm"] = df["name"].apply(normalize_text)
+
+    print(f"sale_times cleaned: {df.shape}")
+
+    return df
+
+
+def clean_launches(launches):
+    df = launches.copy()
+
+    required_cols = [
+        "sku",
+        "artikel_name",
+        "product",
+        "flavour",
+        "product_form",
+        "launch_date",
+        "first_order_quantity",
+        "uvp",
+        "launch_strategy_type",
+        "Product Use Case / What it is about",
+        "Target Group",
+        "first_week_quantity",
+        "first_6_week_quantity",
+        "first_week_nc",
+        "first_6_week_nc",
+        "first_week_total_c",
+        "first_6_week_total_c",
+    ]
+
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"launched_product_details.csv missing columns: {missing}")
+
+    df["launch_date"] = pd.to_datetime(df["launch_date"], errors="coerce")
+    df["uvp"] = df["uvp"].apply(clean_numeric)
+    df["first_order_quantity"] = df["first_order_quantity"].apply(clean_numeric)
+
+    for col in TARGET_METRICS:
+        df[col] = df[col].apply(clean_numeric)
+
+    if "first_week_quantity_target" in df.columns:
+        df["first_week_quantity_target"] = df["first_week_quantity_target"].apply(clean_numeric)
+
+    if "first_week_quantity_target_accuracy" in df.columns:
+        df["first_week_quantity_target_accuracy"] = (
+            df["first_week_quantity_target_accuracy"].apply(clean_numeric)
+        )
+
+    df = df[df["launch_date"].notna()].copy()
+
+    df["launch_strategy_type"] = df["launch_strategy_type"].apply(normalize_strategy)
+
+    df["product_norm"] = df["product"].apply(normalize_text)
+    df["flavour_norm"] = df["flavour"].apply(normalize_text)
+    df["product_form_norm"] = df["product_form"].apply(normalize_text)
+    df["use_case_norm"] = df["Product Use Case / What it is about"].apply(normalize_text)
+    df["target_group_norm"] = df["Target Group"].apply(normalize_text)
+    df["artikel_name_norm"] = df["artikel_name"].apply(normalize_text)
+
+    df["launch_month"] = df["launch_date"].dt.month
+    df["launch_year"] = df["launch_date"].dt.year
+    df["launch_year_month"] = df["launch_date"].dt.to_period("M").astype(str)
+
+    df["units_per_customer_1w"] = (
+        df["first_week_quantity"] / df["first_week_total_c"].replace(0, np.nan)
+    )
+    df["units_per_customer_6w"] = (
+        df["first_6_week_quantity"] / df["first_6_week_total_c"].replace(0, np.nan)
+    )
+    df["first_week_share_of_6w"] = (
+        df["first_week_quantity"] / df["first_6_week_quantity"].replace(0, np.nan)
+    )
+    df["new_customer_share_1w"] = (
+        df["first_week_nc"] / df["first_week_total_c"].replace(0, np.nan)
+    )
+    df["new_customer_share_6w"] = (
+        df["first_6_week_nc"] / df["first_6_week_total_c"].replace(0, np.nan)
+    )
+
+    print(f"launches cleaned: {df.shape}")
+    print("launch strategy counts:")
+    print(df["launch_strategy_type"].value_counts(dropna=False))
+
+    return df
+
+
+# ============================================================
+# SALE FEATURES
+# ============================================================
+
+def add_order_sale_flags(orders, sale_times):
+    df = orders.copy()
+    df["sale_name"] = None
+    df["is_sale_period"] = 0
+
+    for _, sale in sale_times.iterrows():
+        mask = (df["date"] >= sale["start_d"]) & (df["date"] <= sale["end_d"])
+        df.loc[mask, "sale_name"] = sale["name"]
+        df.loc[mask, "is_sale_period"] = 1
+
+    return df
+
+
+def add_launch_sale_features(launches, sale_times):
+    df = launches.copy()
+
+    df["launch_during_sale"] = 0
+    df["first_week_sale_days"] = 0
+    df["first_6_week_sale_days"] = 0
+    df["sale_name_overlap"] = ""
+
+    for idx, row in df.iterrows():
+        launch_date = row["launch_date"]
+        first_week_end = launch_date + pd.Timedelta(days=6)
+        first_6w_end = launch_date + pd.Timedelta(days=41)
+
+        overlap_names = []
+        first_week_days = 0
+        first_6w_days = 0
+        launch_during_sale = 0
+
+        for _, sale in sale_times.iterrows():
+            sale_start = sale["start_d"]
+            sale_end = sale["end_d"]
+
+            if sale_start <= launch_date <= sale_end:
+                launch_during_sale = 1
+                overlap_names.append(str(sale["name"]))
+
+            overlap_1w_start = max(launch_date, sale_start)
+            overlap_1w_end = min(first_week_end, sale_end)
+            if overlap_1w_start <= overlap_1w_end:
+                first_week_days += (overlap_1w_end - overlap_1w_start).days + 1
+                overlap_names.append(str(sale["name"]))
+
+            overlap_6w_start = max(launch_date, sale_start)
+            overlap_6w_end = min(first_6w_end, sale_end)
+            if overlap_6w_start <= overlap_6w_end:
+                first_6w_days += (overlap_6w_end - overlap_6w_start).days + 1
+                overlap_names.append(str(sale["name"]))
+
+        df.loc[idx, "launch_during_sale"] = launch_during_sale
+        df.loc[idx, "first_week_sale_days"] = first_week_days
+        df.loc[idx, "first_6_week_sale_days"] = first_6w_days
+        df.loc[idx, "sale_name_overlap"] = ", ".join(sorted(set(overlap_names)))
+
+    return df
+
+
+# ============================================================
+# CALIBRATION TABLES
+# ============================================================
+
+def build_monthly_company_scale(orders):
+    monthly = (
+        orders.groupby("year_month")
+        .agg(
+            monthly_quantity=("quantity", "sum"),
+            monthly_revenue=("net_revenue", "sum"),
+            monthly_orders=("order_id", "nunique"),
+            monthly_customers=("customer_nr", "nunique"),
+        )
+        .reset_index()
+    )
+
+    monthly["date"] = pd.to_datetime(monthly["year_month"] + "-01")
+
+    return monthly
+
+
+def build_seasonality_index(orders):
+    month_qty = (
+        orders.groupby("month")["quantity"]
+        .sum()
+        .reindex(range(1, 13))
+    )
+
+    avg_month = month_qty.mean()
+
+    seasonality = {}
+    for month, qty in month_qty.items():
+        seasonality[int(month)] = clip_factor(safe_divide(qty, avg_month, default=1.0), 0.6, 1.5)
+
+    return seasonality
+
+
+def build_strategy_factors(launches):
+    factors = {}
+
+    standard = launches[launches["launch_strategy_type"] == "standard"]
+
+    for strategy in ["standard", "co_creation", "limited_edition"]:
+        strategy_df = launches[launches["launch_strategy_type"] == strategy]
+
+        factors[strategy] = {}
+
+        for metric in TARGET_METRICS:
+            standard_mean = standard[metric].mean()
+            strategy_mean = strategy_df[metric].mean()
+
+            raw_factor = safe_divide(strategy_mean, standard_mean, default=1.0)
+            factors[strategy][metric] = clip_factor(raw_factor, 0.5, 2.2)
+
+    return factors
+
+
+def build_flavour_factors(launches):
+    """
+    Flavour factor by metric:
+    average metric for flavour / overall average metric.
+    """
+    factors = {}
+
+    for flavour, group in launches.groupby("flavour_norm"):
+        if not flavour:
+            continue
+
+        factors[flavour] = {}
+
+        for metric in TARGET_METRICS:
+            overall_mean = launches[metric].mean()
+            flavour_mean = group[metric].mean()
+            raw_factor = safe_divide(flavour_mean, overall_mean, default=1.0)
+            factors[flavour][metric] = clip_factor(raw_factor, 0.6, 1.7)
+
+    return factors
+
+
+def build_product_form_factors(launches):
+    factors = {}
+
+    for form, group in launches.groupby("product_form_norm"):
+        if not form:
+            continue
+
+        factors[form] = {}
+
+        for metric in TARGET_METRICS:
+            overall_mean = launches[metric].mean()
+            form_mean = group[metric].mean()
+            raw_factor = safe_divide(form_mean, overall_mean, default=1.0)
+            factors[form][metric] = clip_factor(raw_factor, 0.6, 1.7)
+
+    return factors
+
+
+def build_sale_factors(launches):
+    """
+    Simple launch sale overlap factor.
+    Separate first-week and 6-week sale factors.
+    """
+    sale_factors = {}
+
+    for metric in TARGET_METRICS:
+        baseline_mean = launches[metric].mean()
+
+        during_sale_mean = launches.loc[
+            launches["launch_during_sale"] == 1,
+            metric
+        ].mean()
+
+        first_week_sale_mean = launches.loc[
+            launches["first_week_sale_days"] > 0,
+            metric
+        ].mean()
+
+        first_6w_sale_mean = launches.loc[
+            launches["first_6_week_sale_days"] > 0,
+            metric
+        ].mean()
+
+        sale_factors[metric] = {
+            "launch_during_sale": clip_factor(
+                safe_divide(during_sale_mean, baseline_mean, default=1.0),
+                0.6,
+                1.8,
+            ),
+            "first_week_sale_overlap": clip_factor(
+                safe_divide(first_week_sale_mean, baseline_mean, default=1.0),
+                0.6,
+                1.8,
+            ),
+            "first_6_week_sale_overlap": clip_factor(
+                safe_divide(first_6w_sale_mean, baseline_mean, default=1.0),
+                0.6,
+                1.8,
+            ),
+        }
+
+    return sale_factors
+
+
+def build_price_elasticity(launches):
+    df = launches[["uvp", "first_6_week_quantity"]].dropna()
+    df = df[(df["uvp"] > 0) & (df["first_6_week_quantity"] > 0)]
+
+    if len(df) < 5:
+        return -0.5
+
+    df["log_price"] = np.log(df["uvp"])
+    df["log_qty"] = np.log(df["first_6_week_quantity"])
+
+    coef = np.polyfit(df["log_price"], df["log_qty"], 1)
+    elasticity = float(coef[0])
+
+    # Keep it stable
+    elasticity = float(np.clip(elasticity, -1.5, -0.1))
+    return elasticity
+
+
+def build_growth_context(orders):
+    """
+    Recent company scale vs all-history monthly average.
+    """
+    monthly = build_monthly_company_scale(orders).sort_values("date")
+
+    if monthly.empty:
+        return {
+            "recent_3m_avg_quantity": 1.0,
+            "historical_avg_quantity": 1.0,
+            "company_growth_factor": 1.0,
+        }
+
+    recent = monthly.tail(3)
+    recent_avg = recent["monthly_quantity"].mean()
+    hist_avg = monthly["monthly_quantity"].mean()
+
+    growth_factor = clip_factor(safe_divide(recent_avg, hist_avg, default=1.0), 0.7, 1.8)
+
+    return {
+        "recent_3m_avg_quantity": float(recent_avg),
+        "historical_avg_quantity": float(hist_avg),
+        "company_growth_factor": float(growth_factor),
+    }
+
+
+def ensure_target_group_mapping_file(launches):
+    """
+    Creates a starter raw->canonical mapping file if it does not exist.
+    """
+    if os.path.exists(TARGET_GROUP_MAPPING_PATH):
+        mapping_df = pd.read_csv(TARGET_GROUP_MAPPING_PATH)
+
+        required_cols = ["raw_target_group", "canonical_target_group"]
+        missing = [c for c in required_cols if c not in mapping_df.columns]
+        if missing:
+            raise ValueError(
+                f"target_group_mapping.csv missing columns: {missing}"
+            )
+
+        mapping_df = mapping_df.copy()
+        mapping_df["raw_target_group"] = mapping_df["raw_target_group"].astype(str).str.strip()
+        mapping_df["canonical_target_group"] = (
+            mapping_df["canonical_target_group"].astype(str).str.strip()
+        )
+        mapping_df = mapping_df[
+            mapping_df["raw_target_group"].astype(bool)
+            & mapping_df["canonical_target_group"].astype(bool)
+        ].drop_duplicates()
+        return mapping_df
+
+    raw_values = sorted(
+        {
+            str(x).strip()
+            for x in launches["Target Group"].dropna().tolist()
+            if str(x).strip()
+        }
+    )
+
+    mapping_df = pd.DataFrame(
+        {
+            "raw_target_group": raw_values,
+            "canonical_target_group": raw_values,
+        }
+    )
+
+    os.makedirs(os.path.dirname(TARGET_GROUP_MAPPING_PATH), exist_ok=True)
+    mapping_df.to_csv(TARGET_GROUP_MAPPING_PATH, index=False)
+
+    print(
+        f"Created starter target-group mapping file: {TARGET_GROUP_MAPPING_PATH}"
+    )
+    return mapping_df
+
+
+def apply_target_group_mapping(launches, mapping_df):
+    df = launches.copy()
+
+    mapping = {
+        normalize_text(raw): canonical
+        for raw, canonical in mapping_df[["raw_target_group", "canonical_target_group"]].values
+        if str(raw).strip() and str(canonical).strip()
+    }
+
+    df["raw_target_group"] = df["Target Group"].fillna("").astype(str).str.strip()
+    df["raw_target_group_norm"] = df["raw_target_group"].apply(normalize_text)
+
+    def _map_target_group(raw, raw_norm):
+        if raw_norm in mapping:
+            return mapping[raw_norm]
+        if raw:
+            return raw
+        return "OTHER"
+
+    df["canonical_target_group"] = df.apply(
+        lambda row: _map_target_group(
+            row["raw_target_group"],
+            row["raw_target_group_norm"],
+        ),
+        axis=1,
+    )
+
+    df["canonical_target_group"] = df["canonical_target_group"].astype(str).str.strip()
+    df["canonical_target_group"] = df["canonical_target_group"].replace("", "OTHER")
+
+    return df
+
+
+def build_target_group_training_table(launches, orders, top_n=8):
+    """
+    Build product-level supervised training data by joining launch labels with
+    aggregated order behavior on SKU.
+    """
+    order_df = orders.copy()
+
+    order_df["is_new_customer"] = (
+        order_df["customer_status"].astype(str).str.upper().str.contains("NEW")
+    ).astype(int)
+
+    order_agg = (
+        order_df.groupby("sku")
+        .agg(
+            order_count=("order_id", "nunique"),
+            order_quantity_sum=("quantity", "sum"),
+            order_revenue_sum=("net_revenue", "sum"),
+            order_avg_price=("price", "mean"),
+            order_avg_quantity=("quantity", "mean"),
+            order_customer_count=("customer_nr", "nunique"),
+            order_new_customer_share=("is_new_customer", "mean"),
+            order_sale_share=("is_sale_period", "mean"),
+        )
+        .reset_index()
+    )
+
+    train_df = launches[
+        [
+            "sku",
+            "product_norm",
+            "use_case_norm",
+            "flavour_norm",
+            "launch_strategy_type",
+            "uvp",
+            "canonical_target_group",
+        ]
+    ].copy()
+
+    train_df = train_df.merge(order_agg, on="sku", how="left")
+
+    numeric_cols = [
+        "uvp",
+        "order_count",
+        "order_quantity_sum",
+        "order_revenue_sum",
+        "order_avg_price",
+        "order_avg_quantity",
+        "order_customer_count",
+        "order_new_customer_share",
+        "order_sale_share",
+    ]
+
+    for col in numeric_cols:
+        train_df[col] = pd.to_numeric(train_df[col], errors="coerce").fillna(0.0)
+
+    train_df["feature_text"] = (
+        train_df["product_norm"].fillna("")
+        + " "
+        + train_df["use_case_norm"].fillna("")
+        + " "
+        + train_df["flavour_norm"].fillna("")
+        + " "
+        + train_df["launch_strategy_type"].fillna("standard")
+    ).str.strip()
+
+    class_counts = train_df["canonical_target_group"].value_counts()
+    top_classes = class_counts.head(top_n).index.tolist()
+
+    train_df["target_group_label"] = np.where(
+        train_df["canonical_target_group"].isin(top_classes),
+        train_df["canonical_target_group"],
+        "OTHER",
+    )
+
+    return train_df, numeric_cols, class_counts.to_dict(), top_classes
+
+
+def train_target_group_inference_model(train_df, numeric_cols):
+    y = train_df["target_group_label"].astype(str)
+    class_count = y.nunique()
+
+    if len(train_df) < 10 or class_count < 2:
+        return {
+            "enabled": False,
+            "reason": "Insufficient labeled data to train target-group model",
+            "training_rows": int(len(train_df)),
+            "classes": sorted(y.unique().tolist()),
+        }
+
+    text_series = train_df["feature_text"].fillna("")
+    vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
+    x_text = vectorizer.fit_transform(text_series)
+
+    x_num = sparse.csr_matrix(train_df[numeric_cols].astype(float).values)
+    x_train = sparse.hstack([x_text, x_num], format="csr")
+
+    model = LogisticRegression(
+        max_iter=3000,
+        class_weight="balanced",
+        multi_class="auto",
+        solver="lbfgs",
+    )
+    model.fit(x_train, y)
+
+    coverage_counts = y.value_counts()
+    total = max(int(len(y)), 1)
+
+    coverage_by_group = {
+        label: {
+            "count": int(count),
+            "share": float(count / total),
+        }
+        for label, count in coverage_counts.items()
+    }
+
+    numeric_defaults = {
+        col: float(train_df[col].mean()) if col in train_df.columns else 0.0
+        for col in numeric_cols
+    }
+
+    return {
+        "enabled": True,
+        "reason": "ok",
+        "model": model,
+        "vectorizer": vectorizer,
+        "numeric_feature_columns": numeric_cols,
+        "numeric_feature_defaults": numeric_defaults,
+        "coverage_by_group": coverage_by_group,
+        "training_rows": int(len(train_df)),
+        "classes": model.classes_.tolist(),
+    }
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    orders_raw, sale_times_raw, launches_raw = load_data()
+
+    orders = clean_orders(orders_raw)
+    sale_times = clean_sale_times(sale_times_raw)
+    launches = clean_launches(launches_raw)
+
+    orders = add_order_sale_flags(orders, sale_times)
+    launches = add_launch_sale_features(launches, sale_times)
+
+    seasonality_index = build_seasonality_index(orders)
+    strategy_factors = build_strategy_factors(launches)
+    flavour_factors = build_flavour_factors(launches)
+    product_form_factors = build_product_form_factors(launches)
+    sale_factors = build_sale_factors(launches)
+    price_elasticity = build_price_elasticity(launches)
+    growth_context = build_growth_context(orders)
+    monthly_company_scale = build_monthly_company_scale(orders)
+
+    mapping_df = ensure_target_group_mapping_file(launches)
+    launches = apply_target_group_mapping(launches, mapping_df)
+    tg_train_df, tg_numeric_cols, tg_class_counts, tg_top_classes = (
+        build_target_group_training_table(
+            launches=launches,
+            orders=orders,
+            top_n=TARGET_GROUP_TOP_N,
+        )
+    )
+    target_group_inference = train_target_group_inference_model(
+        train_df=tg_train_df,
+        numeric_cols=tg_numeric_cols,
+    )
+
+    artifacts = {
+        "metadata": {
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "version": "v2",
+            "orders_rows": int(len(orders)),
+            "launch_count": int(len(launches)),
+            "sale_period_count": int(len(sale_times)),
+            "training_start_date": str(orders["date"].min().date()),
+            "training_end_date": str(orders["date"].max().date()),
+        },
+        "data": {
+            "orders": orders,
+            "sale_times": sale_times,
+            "launches": launches,
+            "monthly_company_scale": monthly_company_scale,
+        },
+        "calibration": {
+            "seasonality_index": seasonality_index,
+            "strategy_factors": strategy_factors,
+            "flavour_factors": flavour_factors,
+            "product_form_factors": product_form_factors,
+            "sale_factors": sale_factors,
+            "price_elasticity": price_elasticity,
+            "growth_context": growth_context,
+            "target_metrics": TARGET_METRICS,
+        },
+        "target_group_inference": {
+            **target_group_inference,
+            "top_n": TARGET_GROUP_TOP_N,
+            "top_classes": tg_top_classes,
+            "class_counts": {
+                str(k): int(v)
+                for k, v in tg_class_counts.items()
+            },
+            "mapping_path": TARGET_GROUP_MAPPING_PATH,
+        },
+    }
+
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+    with open(ARTIFACT_PATH, "wb") as f:
+        pickle.dump(artifacts, f)
+
+    print("\n==========================================")
+    print("Artifact saved successfully")
+    print(f"Path: {ARTIFACT_PATH}")
+    print("==========================================")
+
+    print("\nMetadata:")
+    print(artifacts["metadata"])
+
+    print("\nSeasonality index:")
+    print(seasonality_index)
+
+    print("\nGrowth context:")
+    print(growth_context)
+
+    print("\nPrice elasticity:")
+    print(price_elasticity)
+
+    print("\nTarget-group model:")
+    print(
+        {
+            "enabled": target_group_inference.get("enabled", False),
+            "training_rows": target_group_inference.get("training_rows", 0),
+            "class_count": len(target_group_inference.get("classes", [])),
+        }
+    )
+
+
+if __name__ == "__main__":
+    main()

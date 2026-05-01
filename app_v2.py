@@ -1053,7 +1053,7 @@ def build_forecast_table(ratio_forecast, ml_forecast, confidence):
             "Metric": "Recommended first-order quantity",
             "Ratio worst": "",
             "Ratio base": first_order_base,
-            "Ratio best": "Base 6-week quantity + 10% safety buffer",
+            "Ratio best": "Base 6-week quantity\n+ 10% safety buffer",
             "ML point": "",
             "ML q10": "",
             "ML q50": "",
@@ -1563,17 +1563,50 @@ body, .gradio-container {
     background: linear-gradient(135deg, #fbf7f1 0%, #f3eadf 45%, #eadccb 100%) !important;
     color: #3f342c !important;
 }
-.gradio-container { max-width: 1320px !important; margin: auto !important; }
+
+/* Wider app layout */
+.gradio-container {
+    max-width: 99vw !important;
+    width: 99vw !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+}
+
+/* Make Gradio main area wider too */
+main {
+    max-width: 99vw !important;
+}
+
+/* Cards */
 .header-box, .input-card, .output-card {
     background: rgba(255, 252, 247, 0.94);
     border: 1px solid #e2d1bd;
     border-radius: 24px;
     padding: 18px;
     box-shadow: 0 14px 35px rgba(121, 92, 63, 0.11);
+    width: 100% !important;
 }
-.header-box { padding: 22px 26px; margin-bottom: 18px; }
-.hero-title { font-size: 1.55rem; font-weight: 900; color: #4a392d; letter-spacing: -0.03em; }
-.hero-subtitle { font-size: 0.86rem; color: #7f6754; margin-top: 4px; }
+
+.header-box {
+    padding: 22px 26px;
+    margin-bottom: 18px;
+}
+
+.hero-title {
+    font-size: 1.55rem;
+    font-weight: 900;
+    color: #4a392d;
+    letter-spacing: -0.03em;
+}
+
+.hero-subtitle {
+    font-size: 0.86rem;
+    color: #7f6754;
+    margin-top: 4px;
+}
+
 .section-title {
     font-size: 0.78rem;
     font-weight: 800;
@@ -1582,7 +1615,12 @@ body, .gradio-container {
     text-transform: uppercase;
     margin: 12px 0 8px 0;
 }
-.small-muted { font-size: 0.78rem; color: #8d7460; }
+
+.small-muted {
+    font-size: 0.78rem;
+    color: #8d7460;
+}
+
 button.primary {
     background: linear-gradient(90deg, #b89572 0%, #8d6f55 100%) !important;
     border: none !important;
@@ -1590,25 +1628,73 @@ button.primary {
     color: white !important;
     font-weight: 800 !important;
 }
+
 textarea, input, select {
     border-radius: 16px !important;
     border-color: #d8c4ad !important;
     background: #fffaf4 !important;
     color: #3f342c !important;
 }
-label { color: #5a4637 !important; font-weight: 700 !important; }
-footer { visibility: hidden; }
+
+label {
+    color: #5a4637 !important;
+    font-weight: 700 !important;
+}
+
+/* General table width */
+.dataframe, table {
+    width: 100% !important;
+}
+
+.wrap {
+    width: 100% !important;
+}
+
+/* Applied Ratio Factors: full-width readable table */
+.factor-table-wide table {
+    width: 100% !important;
+    table-layout: auto !important;
+    font-size: 11px !important;
+}
+
+.factor-table-wide th,
+.factor-table-wide td {
+    padding: 5px 7px !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+    line-height: 1.2 !important;
+}
+
+/* Optional: make wide factor table less cramped */
+.factor-table-wide {
+    width: 100% !important;
+}
+
+/* Hide Gradio footer */
+footer {
+    visibility: hidden;
+}
 """
 
-theme = gr.themes.Soft(primary_hue="stone", secondary_hue="amber", neutral_hue="stone")
+theme = gr.themes.Soft(
+    primary_hue="stone",
+    secondary_hue="amber",
+    neutral_hue="stone"
+)
 
-with gr.Blocks(title="Demand Forecasting Agent V2", theme=theme) as demo:
+with gr.Blocks(
+    title="Demand Forecasting Agent V2",
+    theme=theme,
+    css=CSS
+) as demo:
+
     gr.HTML(
         f"""
         <div class="header-box">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:18px;">
                 <div>
-                    <div class="hero-title">🌾 Demand Forecasting Agent V2</div>
+                    <div class="hero-title">Demand Forecasting Agent V2</div>
                     <div class="hero-subtitle">
                         Hybrid launch forecasting using ratio-based comparable launches, behavioral segmentation,
                         supervised ML benchmarking, and quantile intervals.
@@ -1625,67 +1711,205 @@ with gr.Blocks(title="Demand Forecasting Agent V2", theme=theme) as demo:
         """
     )
 
+    # --------------------------------------------------------
+    # Main input + output area
+    # --------------------------------------------------------
     with gr.Row():
         with gr.Column(scale=1):
             gr.HTML("<div class='input-card'>")
+
             gr.HTML("<div class='section-title'>Historical Launch Test</div>")
-            inp_historical_launch = gr.Dropdown(label="Historical launch", choices=HISTORICAL_LAUNCH_CHOICES, value=None)
-            btn_test_historical = gr.Button("🧪 Run Historical Test", variant="secondary")
+            inp_historical_launch = gr.Dropdown(
+                label="Historical launch",
+                choices=HISTORICAL_LAUNCH_CHOICES,
+                value=None
+            )
+
+            btn_test_historical = gr.Button(
+                "🧪 Run Historical Test",
+                variant="secondary"
+            )
 
             gr.HTML("<div class='section-title'>New Launch Input</div>")
-            inp_product_name = gr.Textbox(label="Product name", value="", placeholder="Example: Daily Carnitin")
-            inp_product_need_area = gr.Dropdown(label="Product need area", choices=PRODUCT_NEED_AREA_CHOICES, value=None)
-            inp_benefit_keywords = gr.Dropdown(label="Benefit keywords", choices=BENEFIT_KEYWORD_CHOICES, value=[], multiselect=True)
-            inp_month_year = gr.Dropdown(label="Launch month", choices=MONTH_YEAR_CHOICES, value=None)
-            inp_product_form = gr.Dropdown(label="Product form", choices=PRODUCT_FORM_CHOICES, value=None)
-            inp_strategy = gr.Dropdown(label="Launch strategy type", choices=LAUNCH_STRATEGY_CHOICES, value=None)
-            inp_uvp = gr.Number(label="UVP in EUR", value=None)
-            inp_flavour = gr.Dropdown(label="Flavour", choices=FLAVOUR_CHOICES, value=None)
-            inp_flavour_group = gr.Dropdown(label="Flavour group", choices=FLAVOUR_GROUP_CHOICES, value=None)
-            btn = gr.Button("✨ Generate Forecast", variant="primary", size="lg")
+
+            inp_product_name = gr.Textbox(
+                label="Product name",
+                value="",
+                placeholder="Example: Daily Carnitin"
+            )
+
+            inp_product_need_area = gr.Dropdown(
+                label="Product need area",
+                choices=PRODUCT_NEED_AREA_CHOICES,
+                value=None
+            )
+
+            inp_benefit_keywords = gr.Dropdown(
+                label="Benefit keywords",
+                choices=BENEFIT_KEYWORD_CHOICES,
+                value=[],
+                multiselect=True
+            )
+
+            inp_month_year = gr.Dropdown(
+                label="Launch month",
+                choices=MONTH_YEAR_CHOICES,
+                value=None
+            )
+
+            inp_product_form = gr.Dropdown(
+                label="Product form",
+                choices=PRODUCT_FORM_CHOICES,
+                value=None
+            )
+
+            inp_strategy = gr.Dropdown(
+                label="Launch strategy type",
+                choices=LAUNCH_STRATEGY_CHOICES,
+                value=None
+            )
+
+            inp_uvp = gr.Number(
+                label="UVP in EUR",
+                value=None
+            )
+
+            inp_flavour = gr.Dropdown(
+                label="Flavour",
+                choices=FLAVOUR_CHOICES,
+                value=None
+            )
+
+            inp_flavour_group = gr.Dropdown(
+                label="Flavour group",
+                choices=FLAVOUR_GROUP_CHOICES,
+                value=None
+            )
+
+            btn = gr.Button(
+                "✨ Generate Forecast",
+                variant="primary",
+                size="lg"
+            )
 
             gr.HTML("<div class='section-title'>Summary</div>")
-            out_summary = gr.Textbox(label="", lines=16, interactive=False)
-            out_run_record_status = gr.Textbox(label="Run record", lines=3, interactive=False)
+
+            out_summary = gr.Textbox(
+                label="",
+                lines=16,
+                interactive=False
+            )
+
+            out_run_record_status = gr.Textbox(
+                label="Run record",
+                lines=3,
+                interactive=False
+            )
+
             gr.HTML("</div>")
 
         with gr.Column(scale=2):
             gr.HTML("<div class='output-card'>")
+
             gr.HTML("<div class='section-title'>Forecast Output</div>")
-            out_forecast_table = gr.DataFrame(label="Forecast table", interactive=False, wrap=True)
-            out_chart = gr.Plot(label="Forecast chart")
+
+            out_forecast_table = gr.DataFrame(
+                label="Forecast table",
+                interactive=False,
+                wrap=True
+            )
+
+            out_chart = gr.Plot(
+                label="Forecast chart"
+            )
 
             gr.HTML("<div class='section-title'>Behavioral Segment Impact</div>")
-            out_behavioral_table = gr.DataFrame(label="Behavioral segmentation contribution", interactive=False, wrap=True)
+
+            out_behavioral_table = gr.DataFrame(
+                label="Behavioral segmentation contribution",
+                interactive=False,
+                wrap=True
+            )
 
             gr.HTML("<div class='section-title'>ML Model Benchmark</div>")
-            out_ml_model_summary = gr.DataFrame(label="Model comparison summary", interactive=False, wrap=True)
+
+            out_ml_model_summary = gr.DataFrame(
+                label="Model comparison summary",
+                interactive=False,
+                wrap=True
+            )
 
             gr.HTML("<div class='section-title'>Forecast Explanation</div>")
-            out_explanation = gr.Textbox(label="", lines=18, interactive=False)
+
+            out_explanation = gr.Textbox(
+                label="",
+                lines=18,
+                interactive=False
+            )
+
             gr.HTML("</div>")
 
+    # --------------------------------------------------------
+    # Similar historical launches
+    # --------------------------------------------------------
     with gr.Row():
         with gr.Column(scale=1):
             gr.HTML("<div class='output-card'>")
+
             gr.HTML("<div class='section-title'>Similar Historical Launches</div>")
-            out_similar_table = gr.DataFrame(label="", interactive=False, wrap=True)
+
+            out_similar_table = gr.DataFrame(
+                label="",
+                interactive=False,
+                wrap=True
+            )
+
             gr.HTML("</div>")
 
+    # --------------------------------------------------------
+    # Historical launch comparison
+    # --------------------------------------------------------
     with gr.Row():
         with gr.Column(scale=1):
             gr.HTML("<div class='output-card'>")
+
             gr.HTML("<div class='section-title'>Historical Launch Comparison</div>")
-            out_historical_comparison = gr.DataFrame(label="Historical vs forecast", interactive=False, wrap=True)
-            out_historical_summary = gr.Textbox(label="", lines=8, interactive=False)
+
+            out_historical_comparison = gr.DataFrame(
+                label="Historical vs forecast",
+                interactive=False,
+                wrap=True
+            )
+
+            out_historical_summary = gr.Textbox(
+                label="",
+                lines=8,
+                interactive=False
+            )
+
             gr.HTML("</div>")
 
+    # --------------------------------------------------------
+    # Applied ratio factors - now full width
+    # --------------------------------------------------------
+    with gr.Row():
         with gr.Column(scale=1):
             gr.HTML("<div class='output-card'>")
+
             gr.HTML("<div class='section-title'>Applied Ratio Factors</div>")
-            out_factor_table = gr.DataFrame(label="", interactive=False, wrap=True)
+
+            out_factor_table = gr.DataFrame(
+                label="",
+                interactive=False,
+                wrap=True,
+                elem_classes=["factor-table-wide"]
+            )
+
             gr.HTML("</div>")
 
+    # --------------------------------------------------------
+    # Button actions
+    # --------------------------------------------------------
     btn.click(
         fn=run_forecast,
         inputs=[
@@ -1714,7 +1938,9 @@ with gr.Blocks(title="Demand Forecasting Agent V2", theme=theme) as demo:
 
     btn_test_historical.click(
         fn=run_historical_launch_test,
-        inputs=[inp_historical_launch],
+        inputs=[
+            inp_historical_launch
+        ],
         outputs=[
             out_forecast_table,
             out_behavioral_table,
@@ -1732,4 +1958,4 @@ with gr.Blocks(title="Demand Forecasting Agent V2", theme=theme) as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(debug=True, css=CSS)
+    demo.launch(debug=True)

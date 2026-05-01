@@ -44,50 +44,12 @@ Instead, it operates as a forecasting and decision-support application. It provi
 
 This repository uses versioned scripts to make the development path of the thesis project traceable.
 
-### V1: Initial MVP
-
-The first version focused on building a minimum viable forecasting workflow. It included early Gradio UI experiments and initial ratio-based demand estimation logic.
-
-However, V1 had several limitations:
-
-- weaker separation between offline artifact generation and online forecasting
-- limited explainability outputs
-- less structured customer behavior modelling
-- limited model diagnostics
-- no formal comparable-launch neighborhood backtesting
-- weaker reproducibility for external review
-
-### V2: Refactored Thesis Version
-
+V1 was the first trial beginning of the thesis.
 V2 is the main version used for the thesis. It separates the system into two core workflows:
 
 - `build_artifacts_v2.py`: offline artifact generation, data cleaning, feature preparation, model training, and diagnostic exports
 - `app_v2.py`: online Gradio interface for running forecasts, comparing historical launches, explaining forecast drivers, and logging forecast runs
 
-Compared with V1, V2 adds:
-
-- cleaned product-level launch data preparation
-- similarity-based comparable-launch forecasting
-- behavioral customer segmentation
-- supervised ML benchmark models
-- uncertainty intervals through quantile models
-- exportable diagnostics
-- forecast run logging
-- mock data workflow for reproducible local testing
-- backtesting-based selection of top-3 comparable launches
-
-### Future Work
-
-Future versions could improve the system by:
-
-- adding automated hyperparameter tuning
-- adding scheduled retraining workflows
-- adding stockout and inventory availability features
-- improving customer-level propensity modelling
-- supporting automated scenario simulations
-- providing a production-ready API backend
-
----
 
 ## Architecture
 

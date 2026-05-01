@@ -477,7 +477,7 @@ def score_launch_similarity(row, ctx):
     }
 
 
-def find_similar_launches(ctx, top_n=7, exclude_sku=None, reference_launch_date=None):
+def find_similar_launches(ctx, top_n=3, exclude_sku=None, reference_launch_date=None):
     scored_rows = []
     reference_launch_date = pd.to_datetime(reference_launch_date, errors="coerce") if reference_launch_date is not None else pd.Timestamp("NaT")
 
@@ -1369,7 +1369,7 @@ def run_forecast(
 
     similar_launches = find_similar_launches(
         ctx,
-        top_n=7,
+        top_n=3,
         exclude_sku=historical_reference_sku,
         reference_launch_date=ctx["launch_date"] if historical_reference_sku else None,
     )

@@ -40,10 +40,12 @@ except Exception:
 # CONFIG
 # ============================================================
 
-ORDERS_PATH = "data/raw/orders.csv"
-SALE_TIMES_PATH = "data/raw/sale_times.csv"
-LAUNCHES_PATH = "data/raw/launched_product_details.csv"
-TARGET_GROUP_MAPPING_PATH = "data/raw/target_group_mapping.csv"
+DATA_DIR = os.getenv("DATA_DIR", "data/raw")
+
+ORDERS_PATH = os.path.join(DATA_DIR, "orders.csv")
+SALE_TIMES_PATH = os.path.join(DATA_DIR, "sale_times.csv")
+LAUNCHES_PATH = os.path.join(DATA_DIR, "launched_product_details.csv")
+TARGET_GROUP_MAPPING_PATH = os.path.join(DATA_DIR, "target_group_mapping.csv")
 
 ARTIFACT_DIR = "artifacts"
 ARTIFACT_PATH = os.path.join(ARTIFACT_DIR, "model_artifacts_v2.pkl")

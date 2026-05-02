@@ -4,39 +4,196 @@ Demand Forecasting V2 is a hybrid AI-powered decision-support system for segment
 
 The system combines:
 
-- ratio-based forecasting from comparable historical launches
-- behavioral customer segmentation
-- supervised ML benchmark models
-- explainability outputs
-- historical backtesting
-- traceable forecast run logging
+- **Similarity-based forecasting**: comparable-launch identification with learned attribute weights
+- **Customer segmentation**: behavioral clustering for demand composition
+- **Supervised ML benchmarking**: CatBoost and quantile models for performance validation
+- **Explainability**: forecast driver attribution and top-N comparable launch evidence
+- **Historical backtesting**: leave-one-out validation for weight optimization
+- **Audit trail**: comprehensive forecast run logging for traceability
 
 > The repository does **not** include real business data or generated model artifacts. A synthetic mock data workflow is included so that reviewers can run the project locally without access to private company data.
 
 ---
 
-## Thesis Positioning
+## System Overview
 
-This project supports an AI-powered decision-support approach for segment-based demand forecasting and product launch planning in D2C.
+### Core Workflows
 
-The system assists planners by:
+The system operates through three main entry points:
 
-- generating launch demand forecasts
-- explaining forecast drivers
-- comparing upcoming launches with similar historical launches
-- decomposing expected demand by behavioral customer segments
-- benchmarking ratio-based forecasts against supervised ML outputs
-- logging forecast runs for traceability and review
+1. **Artifact Building** (`build_artifacts_v2.py`)
+   - Loads raw launch and order data
+   - Cleans and normalizes product attributes (flavour, product form, launch strategy, etc.)
+   - Engineers features for similarity-based and supervised ML forecasting
+   - Trains CatBoost models and quantile regressors for six target metrics
+   - Exports model objects and diagnostic CSVs
 
-Final planning decisions remain with human stakeholders. The system is intended to support launch planning, stock planning, campaign evaluation, and forecast review. It is **not** designed to fully automate replenishment or business approval decisions.
+2. **Weight Optimization** (`archive/experiments/backtest_similarity_weights.py`)
+   - Backtests alternative similarity-weight configurations
+   - Uses leave-one-out cross-validation on historical launches
+   - Compares baseline schemes (equal, category-heavy, launch-heavy, current) 
+   - Runs randomized search over 1000 weight iterations to find empirically optimal configuration
+   - Selects best weights based on weighted mean absolute percentage error (WMAPE)
+
+3. **Forecast Interface** (`app_v2.py`)
+   - Gradio-based decision-support UI
+   - Forecasts demand using learned similarity weights
+   - Identifies and ranks comparable historical launches
+   - Runs supervised ML models for performance benchmarking
+   - Logs forecast runs with full metadata and timestamp
+
+### Decision-Support Scope
+
+This system is not a fully autonomous agent. It does not independently trigger planning workflows, approve stock quantities, contact stakeholders, or execute replenishment decisions.
+
+Instead, it operates as a forecasting and decision-support application. It provides:
+
+- Structured demand forecasts with confidence intervals
+- Evidence from comparable historical launches  
+- Segment-based demand composition
+- ML benchmark outputs for forecast validation
+- Scenario bounds and uncertainty estimates
+- Complete audit trails for forecast review
+
+Final planning decisions remain with human stakeholders.
 
 ---
 
-## Decision-Support Scope
+## Similarity-Based Forecasting
 
-This system is not a fully autonomous agent. It does not independently trigger planning workflows, approve first-order quantities, contact stakeholders, or execute replenishment decisions.
+The system's core innovation is **similarity-weighted forecasting**: predicting a new product's demand by identifying the most similar historical launches and averaging their outcomes.
 
-Instead, it operates as a forecasting and decision-support application. It provides structured forecasts, comparable-launch evidence, segment-based demand composition, ML benchmark outputs, scenario bounds, confidence indicators, and traceable run logs.
+### Similarity Calculation
+
+Similarity between two launches is computed as a weighted sum across nine product attributes:
+
+**Categorical attributes** (exact match = 1.0, otherwise = 0.0):
+- Launch month
+- Flavour  
+- Product need area
+- Launch strategy
+- Flavour group
+- Product form
+
+**Continuous attribute**:
+- Price (1 - normalized absolute difference)
+
+**Text attributes** (token-based Jaccard similarity):
+- Product text (concatenated product name, use case, target group)
+- Benefit keywords
+
+### Forecasting Logic
+
+For a target launch:
+
+1. **Compute similarities** to all historical launches using learned weights
+2. **Select top-K neighbors** (default K=3) by similarity score
+3. **Predict metrics** by weighted-averaging neighbor outcomes, weights = normalized similarity scores
+4. **Generate evidence** by returning top matches and their metrics for explainability
+
+### Weight Learning
+
+Rather than manually tuning weights, the system uses **randomized leave-one-out backtesting**:
+
+- For each historical launch (test set), compute predictions from all others (train set)
+- Evaluate prediction accuracy using WMAPE (weighted MAPE across all test launches)
+- Repeat for 1000 random weight configurations drawn from Dirichlet distribution
+- Select configuration with lowest average WMAPE
+
+This approach is unsupervised but empirically grounded in retrospective forecast accuracy.
+
+---
+
+## Backtest Similarity Weights
+
+**File**: [archive/experiments/backtest_similarity_weights.py](archive/experiments/backtest_similarity_weights.py)
+
+### Purpose
+
+This script optimizes the similarity weights used to match new products with comparable historical launches. It runs two phases:
+
+1. **Baseline Phase**: Evaluates four predefined weight schemes
+2. **Random Search Phase**: Searches 1000 random weight configurations to find an empirically optimal set
+
+### Key Functions
+
+**`similarity_score(row_a, row_b, weights)`**
+- Computes weighted similarity between two launches
+- Blends categorical exactness, price proximity, and text similarity
+- Returns normalized score in [0, 1]
+
+**`predict_from_similar_launches(target_row, candidate_rows, weights, metric, top_k=5)`**
+- Finds top-K most similar historical launches
+- Predicts target metric by weighted-averaging similar launches' outcomes
+- Returns point estimate and evidence (match indices and similarity scores)
+
+**`run_backtest(launch_df, weights, weight_set_name, top_k=5)`**
+- Implements leave-one-out cross-validation
+- For each launch: predicts its metrics using all others, records actual vs predicted
+- Returns detailed results: predictions, actuals, errors, and match evidence
+
+**`run_random_weight_search(launch_df, n_iterations=5000, top_k=5, random_seed=42)`**
+- Generates random normalized weight vectors using Dirichlet distribution
+- For each: runs full backtest and scores by average WMAPE
+- Tracks best configuration and returns its weights, metrics, and detailed predictions
+
+**`evaluate_results(backtest_df)`**
+- Aggregates detailed predictions into summary statistics per weight set and metric
+- Computes MAE, RMSE, MAPE, WMAPE for each configuration
+
+### Workflow
+
+```
+1. Load launch dataframe from model artifacts
+2. Run baseline backtests on 4 predefined weight schemes
+3. Print summary of baseline performance by metric
+4. Run random search over 1000 iterations
+5. Track best configuration (lowest average WMAPE)
+6. Export results:
+   - weight_backtest_results.csv (baseline summary statistics)
+   - weight_backtest_predictions.csv (baseline detailed predictions)
+   - weight_random_search_results.csv (all 1000 random iterations ranked)
+   - best_similarity_weights.csv (optimal weight vector)
+   - best_similarity_weights_backtest_summary.csv (summary for best config)
+   - best_similarity_weights_predictions.csv (detailed predictions for best config)
+```
+
+### Output Interpretation
+
+**Summary statistics** (MAE, RMSE, MAPE, WMAPE):
+- Lower values indicate better predictive accuracy
+- WMAPE is the optimization target (weighted by actual values, robust to outliers)
+- Separate statistics for each target metric (first week quantity, 6-week quantity, etc.)
+
+**Detailed predictions**:
+- Actual vs predicted for each historical launch
+- Top-K match indices and similarity scores (evidence)
+- Individual prediction errors for post-hoc analysis
+
+### Target Metrics
+
+The script backtests predictions on six demand metrics:
+
+- `first_week_quantity`: Total units sold in first week
+- `first_6_week_quantity`: Total units sold in first 6 weeks
+- `first_week_nc`: New customers acquired in first week
+- `first_6_week_nc`: New customers acquired in first 6 weeks
+- `first_week_total_c`: Total customers (new + repeat) in first week
+- `first_6_week_total_c`: Total customers (new + repeat) in first 6 weeks
+
+### Running the Script
+
+```bash
+# Ensure artifacts are built
+python build_artifacts_v2.py
+
+# Run backtest and weight optimization
+python archive/experiments/backtest_similarity_weights.py
+
+# Review results in artifacts/
+ls artifacts/weight_*.csv
+ls artifacts/best_similarity_weights*.csv
+```
 
 ---
 
@@ -50,54 +207,159 @@ The first version focused on building a minimum viable forecasting workflow. It 
 
 However, V1 had several limitations:
 
-- weaker separation between offline artifact generation and online forecasting
-- limited explainability outputs
-- less structured customer behavior modelling
-- limited model diagnostics
-- no formal comparable-launch neighborhood backtesting
-- weaker reproducibility for external review
+- Weaker separation between offline artifact generation and online forecasting
+- Limited explainability outputs
+- Less structured customer behavior modelling
+- Limited model diagnostics
+- No formal comparable-launch neighborhood backtesting
+- Weaker reproducibility for external review
 
 ### V2: Refactored Thesis Version
 
-V2 is the main version used for the thesis. It separates the system into two core workflows:
+V2 is the main version used for the thesis. It separates the system into distinct workflows:
 
-- `build_artifacts_v2.py`: offline artifact generation, data cleaning, feature preparation, model training, and diagnostic exports
-- `app_v2.py`: online Gradio interface for running forecasts, comparing historical launches, explaining forecast drivers, and logging forecast runs
+- `build_artifacts_v2.py`: Offline artifact generation, data cleaning, feature engineering, model training
+- `app_v2.py`: Online Gradio UI for forecasting, comparable-launch search, and run logging
+- `archive/experiments/backtest_similarity_weights.py`: Weight optimization via empirical backtesting
 
-Compared with V1, V2 adds:
+V2 improvements over V1:
 
-- cleaned product-level launch data preparation
-- similarity-based comparable-launch forecasting
-- behavioral customer segmentation
-- supervised ML benchmark models
-- uncertainty intervals through quantile models
-- exportable diagnostics
-- forecast run logging
-- mock data workflow for reproducible local testing
-- backtesting-based selection of top-3 comparable launches
+- Clean separation of offline and online workflows
+- Learned similarity weights from historical backtest accuracy
+- Behavioral customer segmentation with explainability
+- Supervised ML benchmark models (CatBoost, quantile regression)
+- Uncertainty quantification through confidence intervals
+- Comprehensive audit trail and forecast logging
+- Mock data pipeline for reproducible local testing
+- Empirical comparable-launch neighborhood selection (top-3)
 
-### Future Work
+### Future Directions
 
-Future versions could improve the system by:
+Potential enhancements:
 
-- adding automated hyperparameter tuning
-- adding scheduled retraining workflows
-- adding stockout and inventory availability features
-- improving customer-level propensity modelling
-- supporting automated scenario simulations
-- providing a production-ready API backend
+- Automated hyperparameter tuning (Bayesian optimization)
+- Scheduled retraining workflows with drift detection
+- Inventory and stockout constraint integration
+- Customer-level propensity scoring and churn modeling
+- Scenario simulation and what-if analysis
+- Production-ready REST API backend
 
 ---
 
 ## Architecture
 
 ```text
+Data Input
+    ↓
 data/raw/*.csv or data/mock/*.csv
-    -> build_artifacts_v2.py
-    -> artifacts/model_artifacts_v2.pkl (+ diagnostic CSV exports)
-    -> app_v2.py
-    -> forecast outputs + forecast run log
+    ↓
+[build_artifacts_v2.py] ← [backtest_similarity_weights.py]
+    ↓                              ↓
+artifacts/model_artifacts_v2.pkl   artifacts/best_similarity_weights.csv
+artifacts/*.csv (diagnostics)
+    ↓
+[app_v2.py] (Gradio forecasting UI)
+    ↓
+Forecast outputs + run log
 ```
+
+---
+
+## Quick Start
+
+### With Mock Data (No Private Data Required)
+
+```bash
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Generate mock training data
+python testing/generate_mock_data.py
+
+# Build model artifacts
+python build_artifacts_v2.py
+
+# Optimize similarity weights (optional, uses defaults if skipped)
+python archive/experiments/backtest_similarity_weights.py
+
+# Launch forecasting UI
+python app_v2.py
+# Open http://localhost:7860 in browser
+```
+
+### Data Requirements
+
+Input CSVs must include columns for:
+- Launch identifiers: `sku`, `product`
+- Product attributes: `flavour`, `product_form`, `product_need_area`, `launch_strategy`, `benefit_keywords`
+- Metadata: `launch_month` or `launch_date`, `price` or `uvp`
+- Text: `product_text` or components (`product`, `use_case`, `target_group`)
+- Targets: `first_week_quantity`, `first_6_week_quantity`, `first_week_nc`, `first_6_week_nc`, `first_week_total_c`, `first_6_week_total_c`
+
+---
+
+## Project Structure
+
+| Directory/File | Purpose |
+|---|---|
+| `build_artifacts_v2.py` | Offline workflow: data cleaning, feature engineering, model training |
+| `app_v2.py` | Online workflow: Gradio UI for forecasting and run logging |
+| `archive/experiments/backtest_similarity_weights.py` | Weight optimization via randomized leave-one-out backtesting |
+| `data/raw/` | Raw input CSVs (not included, use mock data or supply your own) |
+| `data/mock/` | Generated synthetic training data |
+| `data/feedback/` | Forecast run logs (audit trail) |
+| `artifacts/` | Generated model objects, weights, and diagnostic exports |
+| `testing/` | Utility scripts for mock data generation and backtesting |
+
+---
+
+## Key Features
+
+✓ **Similarity-weighted forecasting** with learned attribute weights  
+✓ **Empirical weight optimization** via randomized backtesting  
+✓ **Comparable-launch evidence** for forecast explainability  
+✓ **Customer segmentation** for demand composition analysis  
+✓ **ML benchmark models** for forecast validation  
+✓ **Confidence intervals** via quantile regression  
+✓ **Audit trail** with complete run logging  
+✓ **Mock data pipeline** for reproducible testing  
+✓ **Interactive Gradio UI** for stakeholder engagement  
+
+---
+
+## Model Outputs
+
+**Forecast Summary**:
+- Point estimates for six demand metrics
+- Confidence intervals (quantile predictions)
+- Top-3 comparable historical launches with similarity scores
+
+**Forecast Evidence**:
+- Comparable launches ranked by similarity
+- Attribute-level similarity decomposition  
+- Forecast driver attribution
+
+**ML Benchmarks**:
+- CatBoost predictions for comparison
+- Ensemble-based confidence bounds
+
+**Run Log**:
+- Timestamp, user, input parameters
+- Forecast outputs with full trace
+- Top matches and similarity scores
+
+---
+
+## References
+
+- **Decision-support systems**: Simon (1960), Keen & Scott Morton (1978)
+- **Similar-case reasoning**: Kolodner (1993), Leake & Whitehouse (2009)
+- **Demand forecasting**: Armstrong (2001), Gilliland & Tashman (2003)
+- **Backtesting**: Blastland & Dilnot (2007), Armstrong & Fildes (2006)
 
 **Main Idea:** Build historical forecasting intelligence once from sales, launch, campaign, and customer behavior data. Reuse generated artifacts for fast, explainable launch forecasts. Combine ratio-based forecasting with behavioral segmentation and supervised ML benchmarking. Provide confidence scores, scenario bounds, and first-order quantity recommendations. Keep forecasts auditable through run-level logging.
 

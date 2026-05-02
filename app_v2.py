@@ -452,16 +452,16 @@ def score_launch_similarity(row, ctx):
     month_score = month_circular_similarity(ctx["launch_month"], row.get("launch_month", np.nan))
 
     similarity_score = (
-    0.182740 * need_area_score
-    + 0.123736 * benefit_score
-    + 0.004193 * product_form_score
-    + 0.035550 * flavour_group_score
-    + 0.183200 * flavour_score
-    + 0.148905 * strategy_score
-    + 0.046785 * product_score
-    + 0.053567 * price_score
-    + 0.221323 * month_score
-)
+        0.107037 * need_area_score
+        + 0.411674 * benefit_score
+        + 0.011225 * product_form_score
+        + 0.001394 * flavour_group_score
+        + 0.036057 * flavour_score
+        + 0.007193 * strategy_score
+        + 0.224346 * product_score
+        + 0.131564 * price_score
+        + 0.069510 * month_score
+    )
 
     return {
         "similarity_score": float(similarity_score),

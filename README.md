@@ -207,42 +207,42 @@ The first version focused on building a minimum viable forecasting workflow. It 
 
 However, V1 had several limitations:
 
-- Weaker separation between offline artifact generation and online forecasting
-- Limited explainability outputs
-- Less structured customer behavior modelling
-- Limited model diagnostics
-- No formal comparable-launch neighborhood backtesting
-- Weaker reproducibility for external review
+- weaker separation between offline artifact generation and online forecasting
+- limited explainability outputs
+- less structured customer behavior modelling
+- limited model diagnostics
+- no formal comparable-launch neighborhood backtesting
+- weaker reproducibility for external review
 
 ### V2: Refactored Thesis Version
 
-V2 is the main version used for the thesis. It separates the system into distinct workflows:
+V2 is the main version used for the thesis. It separates the system into two core workflows:
 
-- `build_artifacts_v2.py`: Offline artifact generation, data cleaning, feature engineering, model training
-- `app_v2.py`: Online Gradio UI for forecasting, comparable-launch search, and run logging
-- `archive/experiments/backtest_similarity_weights.py`: Weight optimization via empirical backtesting
+- `build_artifacts_v2.py`: offline artifact generation, data cleaning, feature preparation, model training, and diagnostic exports
+- `app_v2.py`: online Gradio interface for running forecasts, comparing historical launches, explaining forecast drivers, and logging forecast runs
 
-V2 improvements over V1:
+Compared with V1, V2 adds:
 
-- Clean separation of offline and online workflows
-- Learned similarity weights from historical backtest accuracy
-- Behavioral customer segmentation with explainability
-- Supervised ML benchmark models (CatBoost, quantile regression)
-- Uncertainty quantification through confidence intervals
-- Comprehensive audit trail and forecast logging
-- Mock data pipeline for reproducible local testing
-- Empirical comparable-launch neighborhood selection (top-3)
+- cleaned product-level launch data preparation
+- similarity-based comparable-launch forecasting
+- behavioral customer segmentation
+- supervised ML benchmark models
+- uncertainty intervals through quantile models
+- exportable diagnostics
+- forecast run logging
+- mock data workflow for reproducible local testing
+- backtesting-based selection of top-3 comparable launches
 
-### Future Directions
+### Future Work
 
-Potential enhancements:
+Future versions could improve the system by:
 
-- Automated hyperparameter tuning (Bayesian optimization)
-- Scheduled retraining workflows with drift detection
-- Inventory and stockout constraint integration
-- Customer-level propensity scoring and churn modeling
-- Scenario simulation and what-if analysis
-- Production-ready REST API backend
+- adding automated hyperparameter tuning
+- adding scheduled retraining workflows
+- adding stockout and inventory availability features
+- improving customer-level propensity modelling
+- supporting automated scenario simulations
+- providing a production-ready API backend
 
 ---
 

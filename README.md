@@ -71,41 +71,7 @@ Similarity between two launches is computed as a weighted sum across nine produc
 - Launch month
 - Flavour  
 - Product need area
-- Launch strategy
-- Flavour group
-- Product form
-
-**Continuous attribute**:
-- Price (1 - normalized absolute difference)
-
-**Text attributes** (token-based Jaccard similarity):
-- Product text (concatenated product name, use case, target group)
-- Benefit keywords
-
-### Forecasting Logic
-
-For a target launch:
-
-1. **Compute similarities** to all historical launches using learned weights
-2. **Select top-K neighbors** (default K=3) by similarity score
-3. **Predict metrics** by weighted-averaging neighbor outcomes, weights = normalized similarity scores
-4. **Generate evidence** by returning top matches and their metrics for explainability
-
-### Weight Learning
-
-Rather than manually tuning weights, the system uses **randomized leave-one-out backtesting**:
-
-- For each historical launch (test set), compute predictions from all others (train set)
-- Evaluate prediction accuracy using WMAPE (weighted MAPE across all test launches)
-- Repeat for 1000 random weight configurations drawn from Dirichlet distribution
-- Select configuration with lowest average WMAPE
-
-This approach is unsupervised but empirically grounded in retrospective forecast accuracy.
-
----
-
-## Backtest Similarity Weights
-
+<!-- Detailed directory tree removed to avoid duplication; see consolidated Project Structure above. -->
 **File**: [archive/experiments/backtest_similarity_weights.py](archive/experiments/backtest_similarity_weights.py)
 
 ### Purpose
@@ -304,16 +270,16 @@ Input CSVs must include columns for:
 
 ## Project Structure
 
+Compact overview of key files and directories:
+
 | Directory/File | Purpose |
 |---|---|
 | `build_artifacts_v2.py` | Offline workflow: data cleaning, feature engineering, model training |
-| `app_v2.py` | Online workflow: Gradio UI for forecasting and run logging |
-| `archive/experiments/backtest_similarity_weights.py` | Weight optimization via randomized leave-one-out backtesting |
-| `data/raw/` | Raw input CSVs (not included, use mock data or supply your own) |
-| `data/mock/` | Generated synthetic training data |
-| `data/feedback/` | Forecast run logs (audit trail) |
-| `artifacts/` | Generated model objects, weights, and diagnostic exports |
-| `testing/` | Utility scripts for mock data generation and backtesting |
+| `app_v2.py` | Online Gradio UI and run logging |
+| `archive/experiments/` | Backtesting and experiments (weight optimization) |
+| `data/` | Raw, mock, and feedback CSVs used for training and evaluation |
+| `artifacts/` | Generated model artifacts and diagnostic exports (not committed) |
+| `testing/` | Utilities: mock data generation and backtesting scripts |
 
 ---
 

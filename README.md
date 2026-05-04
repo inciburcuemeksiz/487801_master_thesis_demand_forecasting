@@ -1,6 +1,36 @@
-# Demand Forecasting V2
+# Demand Forecasting Artifact
 
-Demand Forecasting V2 is a hybrid AI-powered decision-support system for segment-based demand forecasting of new D2C product launches.
+## Master Thesis Project
+
+**Thesis Title:**  
+*AI-Powered Autonomous Agent for Segment-Based Demand Forecasting: Enhancing Product Launch Planning in D2C*
+
+**Author:**  
+Inci Burcu EMEKSIZ
+
+**Student Number:**  
+487801
+
+**Degree Program:**  
+M.Sc. Industrial Engineering and Management  
+Technische Universität Berlin
+
+**Email:**  
+inci.burcu.emeksiz@tu-berlin.de  
+iburcuemeksiz@gmail.com
+
+---
+
+## Note on AI Assistance
+
+This README file was prepared with the assistance of GitHub Copilot.All content, structure, and final decisions were reviewed and adapted by the author.
+
+---
+
+## Project Overview
+
+The **Demand Forecasting Artifact** is a hybrid AI-powered decision-support system designed for behavioral segment-based demand forecasting of new direct-to-consumer product launches.
+
 
 The system combines:
 
@@ -93,12 +123,12 @@ This script optimizes the similarity weights used to match new products with com
 - Predicts target metric by weighted-averaging similar launches' outcomes
 - Returns point estimate and evidence (match indices and similarity scores)
 
-**`run_backtest(launch_df, weights, weight_set_name, top_k=5)`**
+**`run_backtest(launch_df, weights, weight_set_name, top_k=3)`**
 - Implements leave-one-out cross-validation
 - For each launch: predicts its metrics using all others, records actual vs predicted
 - Returns detailed results: predictions, actuals, errors, and match evidence
 
-**`run_random_weight_search(launch_df, n_iterations=5000, top_k=5, random_seed=42)`**
+**`run_random_weight_search(launch_df, n_iterations=5000, top_k=3, random_seed=42)`**
 - Generates random normalized weight vectors using Dirichlet distribution
 - For each: runs full backtest and scores by average WMAPE
 - Tracks best configuration and returns its weights, metrics, and detailed predictions
